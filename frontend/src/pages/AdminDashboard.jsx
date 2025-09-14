@@ -1,4 +1,5 @@
 // src/pages/AdminDashboard.jsx (with dark/light mode support)
+// UPDATED: added Create Job per company and improved Applications handling
 import { useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router-dom";
@@ -7,13 +8,27 @@ import api from "../lib/api";
 export default function Admin({ darkMode = false }) {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [tab, setTab] = useState("users"); // 'users' | 'companies' | 'reviews'
+  const [tab, setTab] = useState("users"); // 'users' | 'companies' | 'reviews' | 'claims' | 'applications'
 
   // Data states
   const [users, setUsers] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [reviews, setReviews] = useState([]);
   const [hasApproved, setHasApproved] = useState(false);
+
+  // Claims state (added)
+  const [claims, setClaims] = useState([]);
+  const [claimFilter, setClaimFilter] = useState("pending"); // pending | approved | rejected
+
+  async function fetchClaims() {
+    try {
+      const { data } = await api.get(`/api/admin/company-claims?status=${claimFilter}`);
+      setClaims(Array.isArray(data) ? data : data.claims || []);
+    } catch (err) {
+      console.error("Failed to load claims:", err);
+      alert("Failed to load claims");
+    }
+  }
 
   // Extra for Companies create form
   const [types, setTypes] = useState([]);
@@ -32,6 +47,25 @@ export default function Admin({ darkMode = false }) {
 
   const [editingReviewId, setEditingReviewId] = useState(null);
   const [reviewForm, setReviewForm] = useState({ rating: 5, comment: "" });
+
+  // --- New: Applications states & helpers ---
+  const [appsCompanies, setAppsCompanies] = useState([]); // companies for the selector
+  const [appsJobs, setAppsJobs] = useState([]); // jobs for selected company
+  const [selectedAppCompanyId, setSelectedAppCompanyId] = useState("");
+  const [selectedAppJobId, setSelectedAppJobId] = useState("");
+  const [appsList, setAppsList] = useState([]); // fetched applications
+  const [loadingApps, setLoadingApps] = useState(false);
+  const [appsNoteMap, setAppsNoteMap] = useState({}); // per-application reviewer note
+
+  // --- New: Create Job states ---
+  const [showCreateJobForCompany, setShowCreateJobForCompany] = useState(null); // company id being created for
+  const [createJobForm, setCreateJobForm] = useState({
+    title: "",
+    description: "",
+    location: "",
+    salary: "",
+  });
+  const [creatingJob, setCreatingJob] = useState(false);
 
   // --- Dark/light mode classes ---
   const wrapperBg = darkMode ? "bg-gray-900 text-gray-100" : "bg-white text-gray-900";
@@ -72,6 +106,22 @@ export default function Admin({ darkMode = false }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, user]);
 
+  // Re-fetch claims when filter changes and claims tab is active
+  useEffect(() => {
+    if (tab === "claims") {
+      fetchClaims();
+    }
+    if (tab === "applications") {
+      fetchCompaniesForApps();
+      // reset selections
+      setSelectedAppCompanyId("");
+      setSelectedAppJobId("");
+      setAppsJobs([]);
+      setAppsList([]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [claimFilter, tab]);
+
   async function fetchSection(section) {
     try {
       if (section === "users") {
@@ -90,6 +140,12 @@ export default function Admin({ darkMode = false }) {
         const { data } = await api.get("/api/admin/reviews");
         setReviews(data.reviews || []);
         setHasApproved(!!data.hasApproved);
+      } else if (section === "claims") {
+        // load claims when admin clicks Claims tab
+        await fetchClaims();
+      } else if (section === "applications") {
+        // handled in useEffect when tab changes
+        await fetchCompaniesForApps();
       }
     } catch (e) {
       console.error(e);
@@ -190,6 +246,7 @@ export default function Admin({ darkMode = false }) {
       setUploading(false);
     }
   }
+
   // --- Reviews: inline edit, delete, approve (existing)
   function startEditReview(r) {
     setEditingReviewId(r.id);
@@ -232,6 +289,138 @@ export default function Admin({ darkMode = false }) {
     }
   }
 
+  // --- Claims: review (approve/reject)
+  async function reviewClaim(id, action) {
+    if (!confirm(`Are you sure to ${action} this claim?`)) return;
+    try {
+      await api.put(`/api/admin/company-claims/${id}/review`, { action });
+      fetchClaims();
+    } catch (err) {
+      console.error(err);
+      alert("Failed to review claim");
+    }
+  }
+
+  // --- Applications helpers ---
+
+  async function fetchCompaniesForApps() {
+    try {
+      const { data } = await api.get("/api/admin/companies");
+      const list = Array.isArray(data) ? data : data.companies || [];
+      setAppsCompanies(list);
+      // also set companies if empty
+      setCompanies((prev) => (prev.length ? prev : list));
+    } catch (err) {
+      console.error("Failed to load companies for applications", err);
+    }
+  }
+
+  async function fetchJobsForCompany(companyId) {
+    if (!companyId) {
+      setAppsJobs([]);
+      return;
+    }
+    try {
+      const { data } = await api.get(`/api/companies/${companyId}/jobs`);
+      setAppsJobs(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("Failed to load jobs for company", err);
+      setAppsJobs([]);
+    }
+  }
+
+  async function loadApplicationsForJob(jobId) {
+    if (!jobId) {
+      setAppsList([]);
+      return;
+    }
+    try {
+      setLoadingApps(true);
+      const { data } = await api.get(`/api/jobs/${jobId}/applications`);
+      setAppsList(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("Failed to load applications", err);
+      setAppsList([]);
+    } finally {
+      setLoadingApps(false);
+    }
+  }
+
+  async function reviewApplicationAction(appId, action) {
+    const note = appsNoteMap[appId] || "";
+    try {
+      await api.put(`/api/applications/${appId}/review`, { action, review_note: note });
+      alert("Updated");
+      if (selectedAppJobId) await loadApplicationsForJob(selectedAppJobId);
+    } catch (err) {
+      console.error("Review error", err);
+      alert(err?.response?.data?.message || "Failed to update");
+    }
+  }
+
+  // --- Create Job (admin) ---
+  function openCreateJobForCompany(companyId) {
+    setShowCreateJobForCompany(companyId);
+    setCreateJobForm({ title: "", description: "", location: "", salary: "" });
+  }
+
+  function cancelCreateJob() {
+    setShowCreateJobForCompany(null);
+    setCreateJobForm({ title: "", description: "", location: "", salary: "" });
+  }
+
+  async function submitCreateJob(companyId) {
+    if (!createJobForm.title.trim()) {
+      alert("Title is required");
+      return;
+    }
+    setCreatingJob(true);
+    try {
+      await api.post(`/api/companies/${companyId}/jobs`, {
+        title: createJobForm.title,
+        description: createJobForm.description,
+        location: createJobForm.location,
+        salary: createJobForm.salary,
+      });
+      alert("Job created");
+      // refresh jobs for currently selected company if matches
+      if (String(selectedAppCompanyId) === String(companyId)) {
+        await fetchJobsForCompany(companyId);
+      }
+      // collapse form
+      cancelCreateJob();
+    } catch (err) {
+      console.error("Create job error", err);
+      alert(err?.response?.data?.message || "Failed to create job");
+    } finally {
+      setCreatingJob(false);
+    }
+  }
+
+  // hook: when selected company changes in Applications tab
+  useEffect(() => {
+    if (selectedAppCompanyId) {
+      fetchJobsForCompany(selectedAppCompanyId);
+      setSelectedAppJobId("");
+      setAppsList([]);
+    } else {
+      setAppsJobs([]);
+      setSelectedAppJobId("");
+      setAppsList([]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedAppCompanyId]);
+
+  // hook: when selected job changes in Applications tab
+  useEffect(() => {
+    if (selectedAppJobId) {
+      loadApplicationsForJob(selectedAppJobId);
+    } else {
+      setAppsList([]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedAppJobId]);
+
   return (
     <div className={`max-w-7xl mx-auto p-6 ${wrapperBg}`}>
       {/* Header */}
@@ -248,6 +437,8 @@ export default function Admin({ darkMode = false }) {
           { key: "users", label: "Users", icon: "👤" },
           { key: "companies", label: "Companies", icon: "🏢" },
           { key: "reviews", label: "Reviews", icon: "⭐" },
+          { key: "claims", label: "Claims", icon: "📝" },
+          { key: "applications", label: "Applications", icon: "📄" },
         ].map((t) => (
           <button
             key={t.key}
@@ -436,7 +627,7 @@ export default function Admin({ darkMode = false }) {
               </div>
             )}
 
-                      {/* Companies Table */}
+            {/* Companies Table */}
             <table className="w-full text-sm">
               <thead>
                 <tr className={`${tableHeaderText}`}>
@@ -520,11 +711,73 @@ export default function Admin({ darkMode = false }) {
                           >
                             Delete
                           </button>
+
+                          {/* Create Job button - admin only (we are on admin page) */}
+                          <button
+                            onClick={() => openCreateJobForCompany(c.id)}
+                            className="px-2 py-1 text-xs rounded bg-indigo-600 text-white hover:bg-indigo-700"
+                          >
+                            Create Job
+                          </button>
                         </div>
                       )}
                     </td>
                   </tr>
                 ))}
+
+                {/* Inline Create Job form for a company (rendered as a table row when active) */}
+                {showCreateJobForCompany && (
+                  <tr>
+                    <td colSpan={6} className="py-3">
+                      <div className="p-4 border rounded bg-gray-50">
+                        <div className="flex items-start gap-4">
+                          <div className="flex-1 grid grid-cols-1 md:grid-cols-4 gap-3">
+                            <input
+                              className={inputFieldClass}
+                              placeholder="Job title"
+                              value={createJobForm.title}
+                              onChange={(e) => setCreateJobForm((s) => ({ ...s, title: e.target.value }))}
+                            />
+                            <input
+                              className={inputFieldClass}
+                              placeholder="Location"
+                              value={createJobForm.location}
+                              onChange={(e) => setCreateJobForm((s) => ({ ...s, location: e.target.value }))}
+                            />
+                            <input
+                              className={inputFieldClass}
+                              placeholder="Salary / price"
+                              value={createJobForm.salary}
+                              onChange={(e) => setCreateJobForm((s) => ({ ...s, salary: e.target.value }))}
+                            />
+                            <input
+                              className={inputFieldClass}
+                              placeholder="Short description"
+                              value={createJobForm.description}
+                              onChange={(e) => setCreateJobForm((s) => ({ ...s, description: e.target.value }))}
+                            />
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => submitCreateJob(showCreateJobForCompany)}
+                              disabled={creatingJob}
+                              className="px-3 py-1 rounded bg-emerald-600 text-white"
+                            >
+                              {creatingJob ? "Creating…" : "Create Job"}
+                            </button>
+                            <button
+                              onClick={cancelCreateJob}
+                              className="px-3 py-1 rounded bg-gray-200"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+
                 {companies.length === 0 && (
                   <tr>
                     <td colSpan={6} className="py-6 text-center text-gray-500">
@@ -534,6 +787,186 @@ export default function Admin({ darkMode = false }) {
                 )}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* APPLICATIONS */}
+        {tab === "applications" && (
+          <div>
+            <div className="mb-4 flex flex-col md:flex-row md:items-end md:gap-4 gap-2">
+              <div className="flex-1">
+                <label className="block text-sm mb-1">Select Company</label>
+                <select
+                  className={inputFieldClass}
+                  value={selectedAppCompanyId}
+                  onChange={(e) => setSelectedAppCompanyId(e.target.value)}
+                >
+                  <option value="">-- Choose company --</option>
+                  {appsCompanies.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex-1">
+                <label className="block text-sm mb-1">Select Job</label>
+                <select
+                  className={inputFieldClass}
+                  value={selectedAppJobId}
+                  onChange={(e) => setSelectedAppJobId(e.target.value)}
+                  disabled={!appsJobs.length}
+                >
+                  <option value="">-- Choose job --</option>
+                  {appsJobs.map((j) => (
+                    <option key={j.id} value={j.id}>
+                      {j.title}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <button
+                  onClick={() => {
+                    if (selectedAppJobId) loadApplicationsForJob(selectedAppJobId);
+                    else if (selectedAppCompanyId) fetchJobsForCompany(selectedAppCompanyId);
+                    else fetchCompaniesForApps();
+                  }}
+                  className={buttonPrimary + " mt-6 md:mt-0"}
+                >
+                  Refresh
+                </button>
+              </div>
+            </div>
+
+            {/* Applications list */}
+            <div className="space-y-4">
+              {loadingApps && <div>Loading applications…</div>}
+              {!loadingApps && !appsList.length && (
+                <div className="text-gray-500">No applications found.</div>
+              )}
+              {!loadingApps &&
+                appsList.map((a) => (
+                  <div
+                    key={a.id}
+                    className={`p-4 rounded border ${darkMode ? "bg-gray-800 border-gray-700" : "bg-white border-gray-200"}`}
+                  >
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <div className="font-semibold">
+                          {a.applicantName || a.name || "Applicant"}{" "}
+                          {a.applicantEmail ? `(${a.applicantEmail})` : ""}
+                        </div>
+                        <div className="text-sm text-gray-500">
+                          Status: <span className="font-medium">{a.status}</span>
+                        </div>
+                        <div className="mt-2 whitespace-pre-wrap">{a.message || a.cover_letter || ""}</div>
+
+                        {/* Files (if backend provides files array) */}
+                        {a.files && a.files.length > 0 && (
+                          <div className="mt-2">
+                            <div className="text-sm font-medium">Resume / files:</div>
+                            <ul className="list-disc ml-5">
+                              {a.files.map((f, i) => (
+                                <li key={i}>
+                                  <a
+                                    href={f.url || f.file_path}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-blue-600 hover:underline"
+                                  >
+                                    {f.original_name || f.file_path || "file"}
+                                  </a>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="text-right">
+                        <div className="mb-2 text-sm">
+                          Applied: {a.created_at ? new Date(a.created_at).toLocaleString() : "-"}
+                        </div>
+                        <div className="flex flex-col gap-2">
+                          <button
+                            onClick={() => reviewApplicationAction(a.id, "shortlist")}
+                            className="px-3 py-1 rounded bg-yellow-500 text-white"
+                          >
+                            Shortlist
+                          </button>
+                          <button
+                            onClick={() => reviewApplicationAction(a.id, "accept")}
+                            className="px-3 py-1 rounded bg-green-600 text-white"
+                          >
+                            Accept
+                          </button>
+                          <button
+                            onClick={() => reviewApplicationAction(a.id, "reject")}
+                            className="px-3 py-1 rounded bg-red-600 text-white"
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-3">
+                      <label className="block text-sm">Reviewer note (optional)</label>
+                      <textarea
+                        value={appsNoteMap[a.id] || ""}
+                        onChange={(e) =>
+                          setAppsNoteMap((s) => ({ ...s, [a.id]: e.target.value }))
+                        }
+                        className="w-full border p-2 rounded"
+                        placeholder="Write feedback or note to applicant"
+                      />
+                    </div>
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
+
+        {/* CLAIMS */}
+        {tab === "claims" && (
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">Company Claims</h2>
+              <div>
+                <select value={claimFilter} onChange={(e) => setClaimFilter(e.target.value)} className={inputFieldClass}>
+                  <option value="pending">Pending</option>
+                  <option value="approved">Approved</option>
+                  <option value="rejected">Rejected</option>
+                </select>
+                <button onClick={fetchClaims} className={buttonPrimary + " ml-2"}>Refresh</button>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {claims.map((c) => (
+                <div key={c.id} className={`p-3 rounded ${darkMode ? "bg-gray-700" : "bg-white"} border`}>
+                  <div className="flex justify-between">
+                    <div>
+                      <div className="font-semibold">{c.companyName || `Company ${c.companyId}`}</div>
+                      <div className="text-sm text-gray-400">By: {c.userName || c.userEmail} — {c.submitted_at ? new Date(c.submitted_at).toLocaleString() : "-"}</div>
+                      <div className="text-sm mt-2">{c.evidence || "-"}</div>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      {c.status === "pending" ? (
+                        <>
+                          <button onClick={() => reviewClaim(c.id, "approve")} className="px-2 py-1 bg-emerald-600 text-white rounded">Approve</button>
+                          <button onClick={() => reviewClaim(c.id, "reject")} className="px-2 py-1 bg-amber-600 text-white rounded">Reject</button>
+                        </>
+                      ) : (
+                        <div className="text-sm">Status: {c.status}</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {claims.length === 0 && <div className="py-4 text-gray-500">No claims found.</div>}
+            </div>
           </div>
         )}
 
@@ -672,5 +1105,3 @@ export default function Admin({ darkMode = false }) {
     </div>
   );
 }
-
-    

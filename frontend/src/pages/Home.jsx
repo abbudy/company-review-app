@@ -6,6 +6,8 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import ReviewForm from "../components/ReviewForm";
 import ReviewsList from "../components/ReviewsList";
+import { Link } from "react-router-dom";
+
 
 export default function Home({ darkMode }) {
   const [companies, setCompanies] = useState([]);
@@ -172,8 +174,11 @@ export default function Home({ darkMode }) {
                     />
                     <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-45 text-white p-2">
                       <div className="font-semibold text-lg truncate">
+                        <Link to={`/companies/${c.id}`} className="hover:underline">
                         {c.name}
-                      </div>
+                        </Link>
+                        </div>
+
                       <div className="text-xs truncate">{c.address || "-"}</div>
                       <div className="mt-1 flex items-center gap-2">
                         <StarRating rating={c.avgRating ?? 0} />

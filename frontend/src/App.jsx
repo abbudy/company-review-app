@@ -8,6 +8,14 @@ import Navbar from "./components/Navbar";
 import Dashboard from "./pages/Dashboard";
 import AdminDashboard from "./pages/AdminDashboard";
 
+import CompanyPage from "./pages/CompanyPage";
+
+import JobList from "./components/JobList";
+import ApplyJobForm from "./components/ApplyJobForm";
+import JobCreate from "./components/JobCreate";
+
+
+
 function App() {
   // Dark mode state
   const [darkMode, setDarkMode] = useState(false);
@@ -59,6 +67,41 @@ function App() {
               </ProtectedRoute>
             }
           />
+          <Route
+            path="/companies/:id"
+            element={
+              <ProtectedRoute>
+                <CompanyPage darkMode={darkMode} />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/companies/:id/jobs"
+            element={
+              <ProtectedRoute>
+                <JobList darkMode={darkMode} />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/companies/:id/jobs/:jobId/apply"
+            element={
+              <ProtectedRoute>
+                <ApplyJobForm darkMode={darkMode} />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/companies/:id/jobs/create"
+            element={
+              <ProtectedRoute>
+                <JobCreate darkMode={darkMode} />
+              </ProtectedRoute>
+            }
+          />
+
+            
+
         </Routes>
       </div>
     </div>

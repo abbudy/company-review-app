@@ -5,6 +5,9 @@ const db = require("../config/db");
 const auth = require("../middleware/authMiddleware");
 const roleMiddleware = require("../middleware/roleMiddleware");
 
+const { listClaims, reviewClaim } = require("../controllers/companyClaimsController");
+
+
 // Only admins
 router.use(auth, roleMiddleware(1));
 
@@ -113,5 +116,12 @@ router.put("/reviews/:id/approve", (req, res) => {
     });
   });
 });
+
+// GET /api/admin/company-claims?status=pending
+router.get("/company-claims", listClaims);
+
+// PUT /api/admin/company-claims/:id/approve
+router.put("/company-claims/:id/review", reviewClaim);
+
 
 module.exports = router;

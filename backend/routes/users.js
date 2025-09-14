@@ -3,6 +3,8 @@ const router = express.Router();
 const db = require("../config/db"); // your MySQL connection
 const auth = require("../middleware/authMiddleware"); // protected routes
 const roleMiddleware = require("../middleware/roleMiddleware");
+const { getMyClaims } = require("../controllers/companyClaimsController");
+
 
 // Assign role to a user (protected)
 router.put("/:id/role", auth, roleMiddleware(1), (req, res) => {
@@ -65,4 +67,7 @@ router.get("/dashboard", auth, (req, res) => {
     });
   });
 });
+
+router.get("/claims", auth, getMyClaims);
+
 module.exports = router;
